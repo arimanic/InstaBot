@@ -1,0 +1,8 @@
+username = arimanic
+password = 
+maxlikes = 400
+minDelay = 2
+maxDelay = 10
+showBrowser = 1
+likeProb = 1/18
+switchHashtagProb = 1/150
