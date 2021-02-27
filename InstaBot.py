@@ -10,27 +10,39 @@ from selenium.common.exceptions import TimeoutException
 import random
 import time
 import datetime
-
+import metrics
 import numpy as np
-hashtag_list = np.genfromtxt("hashtags.txt", comments='#', dtype='str')
+import follower_tracker
 
 class InstaBot:
     # Starts the bot
-    def __init__(self, username, pw, reset):
+    def __init__(self, username, pw, reset, headless = True):
+
+        # Initialize the web driver
         self.options = Options()
-        self.options.headless = False
+        self.options.headless = headless
         self.options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        self.options.add_argument("--start-maximized")
         self.driver = webdriver.Chrome(options=self.options)
         self.driver.implicitly_wait(5)
         self.driver.get("https://instagram.com")
         self.username = username
+
+        # Load metrics
+        self.metrics = metrics.Metrics()
+        self.metrics.load()
+
+        # Load the hashtags to like from
+        self.hashtags = np.genfromtxt("hashtags.txt", comments='#', dtype='str')
         
+        # List of people to unfollow
         try:
             self.unfollow_list = pickle.load(open("follows.pkl", "rb"))
         except:
             self.unfollow_list = list()
 
-        if reset:
+        # Choose a fresh login or to use cookies. If using headless mode you must use cookies
+        if reset and not self.options.headless:
             self.driver.find_element_by_xpath("//input[@name=\"username\"]")\
                 .send_keys(username)
             self.driver.find_element_by_xpath("//input[@name=\"password\"]")\
@@ -39,63 +51,76 @@ class InstaBot:
                 .click()
             self.driver.find_element_by_xpath("//button[contains(text(), 'Not Now')]")\
                 .click()
+            
+            # Save cookies
             pickle.dump(self.driver.get_cookies() , open("cookies.pkl","wb"))
         else:
+
+            # Load the cookies and add them all to the web driver
             cookies = pickle.load(open("cookies.pkl", "rb"))
             for cookie in cookies:
                 self.driver.add_cookie(cookie)
 
+    # Call this to ensure all data is saved properly
     def release(self):
         # Dump the list of followers
         self.unfollow_accounts()
         pickle.dump(self.unfollow_list, open("follows.pkl", "wb"))
+        self.metrics.save()
+        self.driver.quit()
 
     # Likes pictures scraped from a hashtag up to maxlikes
-    def like_hashtags(self, hashtags, maxlikes):
+    def like_hashtags(self, maxlikes):
         total_likes = 0
         total_follows = 0
-        t = time.time()
 
         while total_likes != maxlikes:
-            tag = random.choice(hashtags)
+
+            # Pick a random hashtag
+            tag = random.choice(self.hashtags)
             print("Looking at #" + str(tag))
 
+            # Go to the tag's explore page
             self.driver.get("https://www.instagram.com/explore/tags/" + tag + "/")
-            new_likes, new_follows = self.like_loop(maxlikes - total_likes)
+
+            # Run the like loop and record how many pictures are liked
+            new_likes, new_follows = self.like_loop(maxlikes - total_likes, tag)
             total_likes += new_likes
             total_follows += new_follows
 
-            elapsed = time.time() - t
-            print("Likes per hour = " +  str(total_likes * 3600/elapsed) + ' - Total Likes = ' + str(total_likes) + 
-            " Follows per hour = " +  str(total_follows * 3600/elapsed) + ' - Total Follows = ' + str(total_follows))
+        return total_likes
 
 
     # The loop used to like posts
-    def like_loop(self, maxlikes):
-
-        first_thumbnail = self.driver.find_element_by_class_name('_9AhH0')
-        first_thumbnail.click()
+    def like_loop(self, maxlikes, tag):
 
         printflag = False # Set to true when data changes
+        
+        # Stats
         liked = 0 
         followed = 0
         viewed = 0
-        p_like = 1/18 # Probability of liking a post
-        p_break = 1/150 # Probability of switching hashtags
+
+        # Random probability thresholds
+        p_like = 1/21 # Probability of liking a post
+        p_break = 1/200 # Probability of switching hashtags
         p_follow = 0/5 # Probability of following account after liking photo
+
+        # Click the first thumbnail
+        first_thumbnail = self.driver.find_element_by_class_name('_9AhH0')
+        first_thumbnail.click()
 
         while liked != maxlikes:
             
             # wait random time on each post
-            sleep(random.uniform(2.0, 10.0))
+            sleep(random.uniform(3.0, 10.0))
 
             # wait for the page to be ready
             WebDriverWait(self.driver, 30).until(lambda *args: (self.driver.execute_script("return document.readyState") == "complete"))
 
             # check to switch hashtag
             if p_break > np.random.uniform():
-                print(str(liked) + ' Posts liked out of ' + str(viewed) + ' views', flush=True)
-                return liked, followed
+                break
 
             # check to like the current photo
             if p_like > np.random.uniform():
@@ -106,6 +131,11 @@ class InstaBot:
                     like.click()
                     liked += 1
                     printflag = True
+
+                    # Store the like metrics
+                    acct_name = WebDriverWait(self.driver, 1).until(EC.presence_of_element_located((By.CLASS_NAME,"sqdOP.yWX7d._8A5w5.ZIAjV"))).text
+                    self.metrics.add(acct_name, metrics.LikeData(tag, datetime.datetime.now()))
+
                 except:
                     try:
                         like = WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[aria-label='Unike']:not([class*='glyphsSpriteHeart__filled__16__white u-__7'])")))
@@ -120,17 +150,9 @@ class InstaBot:
                         follow.click()
                         followed += 1
 
-
-                        # Save the followed accounts and the timestamp
-                        mytime = datetime.datetime.now()
-                        name = acct_name.text
-
-                        x = (name, mytime)
-
-                        self.unfollow_list.append(x)
                     except:
                         pass
-
+            # Get the next post
             try:
                 next_post = WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.LINK_TEXT, 'Next')))
                 next_post.click()
@@ -143,28 +165,10 @@ class InstaBot:
                 print(str(liked) + ' Posts liked out of ' + str(viewed) + ' views', flush=True)
                 printflag = False
 
-        print(str(liked) + ' Posts liked out of ' + str(viewed) + ' views', flush=True)
         return liked, followed
 
-    def scrolldown(self):
-        SCROLL_PAUSE_TIME = 1
-
-        # Get scroll height
-        last_height = self.driver.execute_script("return document.body.scrollHeight")
-
-        while True:
-            # Scroll down to bottom
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-
-            # Wait to load page
-            #sleep(SCROLL_PAUSE_TIME)
-
-            # Calculate new scroll height and compare with last scroll height
-            new_height = self.driver.execute_script("return document.body.scrollHeight")
-            if new_height == last_height:
-                break
-            last_height = new_height
-
+    # Goes through the list of accounts set to be unfollowed and unfollows
+    # The ones which meet a certain time threshold
     def unfollow_accounts(self):
         updated_list = list()
 
@@ -187,23 +191,10 @@ class InstaBot:
             
         self.unfollow_list = updated_list
 
+    def get_followers(self, acct_name = None):
+        if acct_name is None:
+            acct_name = self.username
 
+        self.scraper = follower_tracker.FollowerScraper(self.driver, acct_name)
+        self.scraper.scrape_followers()
 
-
-
-
-reset = 0
-
-username, password = np.genfromtxt('secret.txt', dtype='str', comments='#', unpack=True)
-
-bot = InstaBot(username, password, reset)
-bot.like_hashtags(hashtag_list, 200)
-bot.release()
-
-# Sort hashtags by activity
-
-# set a root hashtag
-# scrape A LOT of hashtags
-# store their amount of posts and the time the number was pulled from
-# reach x amount of hashtags
-# 
