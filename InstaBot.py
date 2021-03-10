@@ -16,17 +16,10 @@ import follower_tracker
 
 class InstaBot:
     # Starts the bot
-    def __init__(self, username, pw, reset, headless = True):
+    def __init__(self, botname, username, pw, headless = True):
 
-        # Initialize the web driver
-        self.options = Options()
-        self.options.headless = headless
-        self.options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        self.options.add_argument("--start-maximized")
-        self.driver = webdriver.Chrome(options=self.options)
-        self.driver.implicitly_wait(5)
-        self.driver.get("https://instagram.com")
         self.username = username
+        self.name = botname
 
         # Load metrics
         self.metrics = metrics.Metrics()
@@ -41,8 +34,17 @@ class InstaBot:
         except:
             self.unfollow_list = list()
 
-        # Choose a fresh login or to use cookies. If using headless mode you must use cookies
-        if reset and not self.options.headless:
+
+        self.options = Options()
+        self.options.add_experimental_option('excludeSwitches', ['enable-logging'])
+
+        try: # Load cookies
+            cookies = pickle.load(open(self.name + "_cookies.pkl", "rb"))
+        except: # No cookies found, generate them
+            self.driver = webdriver.Chrome(options=self.options)
+            self.driver.implicitly_wait(5)
+            self.driver.get("https://instagram.com")
+
             self.driver.find_element_by_xpath("//input[@name=\"username\"]")\
                 .send_keys(username)
             self.driver.find_element_by_xpath("//input[@name=\"password\"]")\
@@ -53,14 +55,24 @@ class InstaBot:
                 .click()
             
             # Save cookies
-            pickle.dump(self.driver.get_cookies() , open("cookies.pkl","wb"))
-        else:
+            cookies = self.driver.get_cookies()
+            pickle.dump(cookies , open(self.name + "_cookies.pkl","wb"))
+            self.driver.close()
 
-            # Load the cookies and add them all to the web driver
-            cookies = pickle.load(open("cookies.pkl", "rb"))
-            for cookie in cookies:
-                self.driver.add_cookie(cookie)
 
+
+        # Initialize the web driver with the headless option applied now
+        self.options.headless = headless
+        self.options.add_argument('--window-size=1920,1080')
+        self.driver = webdriver.Chrome(options=self.options)
+        self.driver.implicitly_wait(5)
+        self.driver.get("https://instagram.com")
+
+        # Apply cookies
+        for cookie in cookies:
+            self.driver.add_cookie(cookie)
+
+            
     # Call this to ensure all data is saved properly
     def release(self):
         # Dump the list of followers
@@ -93,33 +105,42 @@ class InstaBot:
 
     # The loop used to like posts
     def like_loop(self, maxlikes, tag):
-
-        printflag = False # Set to true when data changes
         
         # Stats
         liked = 0 
         followed = 0
-        viewed = 0
+        viewed = 1
 
         # Random probability thresholds
-        p_like = 1/21 # Probability of liking a post
-        p_break = 1/200 # Probability of switching hashtags
-        p_follow = 0/5 # Probability of following account after liking photo
+        p_like = 1/12 # Probability of liking a post
+        p_break = 1/300 # Probability of switching hashtags
+        p_follow = 1/80 # Probability of following account after liking photo
 
         # Click the first thumbnail
-        first_thumbnail = self.driver.find_element_by_class_name('_9AhH0')
-        first_thumbnail.click()
+        try:
+            first_thumbnail = WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME,"_9AhH0")))
+            first_thumbnail.click()
+        except:
+            return liked, followed
+
+        print("Liking " + str(maxlikes) + " images")
 
         while liked != maxlikes:
             
             # wait random time on each post
-            sleep(random.uniform(3.0, 10.0))
+            sleep(random.uniform(5.0, 10.0))
 
             # wait for the page to be ready
-            WebDriverWait(self.driver, 30).until(lambda *args: (self.driver.execute_script("return document.readyState") == "complete"))
+            try:
+                WebDriverWait(self.driver, 30).until(lambda *args: (self.driver.execute_script("return document.readyState") == "complete"))
+            except:
+                print("page failed to load")
+                break
+
 
             # check to switch hashtag
             if p_break > np.random.uniform():
+                print("Switching to a different hashtag")
                 break
 
             # check to like the current photo
@@ -130,16 +151,21 @@ class InstaBot:
                     like = WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[aria-label='Like']:not([class*='glyphsSpriteHeart__filled__16__white u-__7'])")))
                     like.click()
                     liked += 1
-                    printflag = True
 
                     # Store the like metrics
                     acct_name = WebDriverWait(self.driver, 1).until(EC.presence_of_element_located((By.CLASS_NAME,"sqdOP.yWX7d._8A5w5.ZIAjV"))).text
                     self.metrics.add(acct_name, metrics.LikeData(tag, datetime.datetime.now()))
 
-                except:
+                    likes_today, last_time = pickle.load(open("loop_data.pkl", "rb"))
+                    pickle.dump([likes_today + 1, last_time], open("loop_data.pkl", "wb"))
+
+                    print(str(liked) + ' Posts liked out of ' + str(viewed) + ' views, Total likes today: ' + str(likes_today+1), flush=True)
+                except Exception as e: 
+                    print(e)                
                     try:
                         like = WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[aria-label='Unike']:not([class*='glyphsSpriteHeart__filled__16__white u-__7'])")))
-                    except:
+                    except Exception as e: 
+                        print(e)                
                         pass
 
                 # Follow the account
@@ -150,20 +176,21 @@ class InstaBot:
                         follow.click()
                         followed += 1
 
-                    except:
+                        print("now following " + acct_name.text)
+                        self.unfollow_list.append((acct_name.text, datetime.datetime.now()))
+                        pickle.dump(self.unfollow_list, open('follows.pkl', 'wb'))
+
+                    except Exception as e: 
+                        print(e)                
                         pass
             # Get the next post
             try:
                 next_post = WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.LINK_TEXT, 'Next')))
                 next_post.click()
                 viewed += 1
-            except :
+            except Exception as e: 
+                print(e)                
                 break
-
-            # Write info to console
-            if printflag:
-                print(str(liked) + ' Posts liked out of ' + str(viewed) + ' views', flush=True)
-                printflag = False
 
         return liked, followed
 
@@ -171,10 +198,10 @@ class InstaBot:
     # The ones which meet a certain time threshold
     def unfollow_accounts(self):
         updated_list = list()
-
+        # Load pkl
         for account, follow_time in self.unfollow_list:
-            print((datetime.datetime.now() - follow_time).total_seconds())
-            if (datetime.datetime.now() - follow_time).total_seconds() > 3*24*60*60:
+            #print((datetime.datetime.now() - follow_time).total_seconds())
+            if (datetime.datetime.now() - follow_time).total_seconds() > 5*24*60*60:
                 self.driver.get("https://www.instagram.com/" + account + "/")
 
                 try:
@@ -184,7 +211,8 @@ class InstaBot:
                     confirm = WebDriverWait(self.driver, 4).until(EC.element_to_be_clickable((By.CLASS_NAME,"aOOlW.-Cab_")))
                     confirm.click()
 
-                except:
+                except Exception as e: 
+                    print(e)                
                     pass
             else:
                 updated_list.append((account, follow_time))
