@@ -1,15 +1,14 @@
 # Tracks the followers on an instagram account
+from time import sleep
+import pickle
+import numpy as np
+import matplotlib.pyplot as plt
+import metrics
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
-from time import sleep
-import pickle
-import datetime
-import numpy as np
-import matplotlib.pyplot as plt
-import metrics
 
 
 class FollowerScraper:
@@ -23,6 +22,7 @@ class FollowerScraper:
         self.account = account
         self.numfollowers = 0
         self.followers = []
+
         # Open the old lists. Create them if they dont exist
         try:
             data_list = pickle.load(open("follower_lists.pkl", "rb"))
@@ -38,6 +38,7 @@ class FollowerScraper:
         try:
             self.prev_followers = pickle.load(open("followers.pkl", "rb"))
         except FileNotFoundError:
+            print("failed to load followers")
             self.prev_followers = []
 
     def scrape_followers(self):
@@ -67,6 +68,7 @@ class FollowerScraper:
 
     def scrolldown(self):
 
+        # Select the panel to scroll in
         actions = ActionChains(self.driver)
         actions.send_keys(Keys.TAB)
         actions.perform()
@@ -74,32 +76,34 @@ class FollowerScraper:
         actions.send_keys(Keys.TAB)
         actions.perform()
 
+        # Grab the container for the scrollbar
         container = self.driver.find_element_by_class_name("isgrP")#("PZuss")
-        lastlen = -1
+
+        # Variables used to track when scrolling is done
         count = 0
-        condition = 20
+        condition = 50
         lastheight = 0
 
         while True:
-        #while len(self.followers) + 1 != self.numfollowers[0] :
-            # Scroll down to bottom
-            #actions.send_keys(Keys.PAGE_DOWN)
-            #actions.perform()
+            # Scroll down
             self.driver.execute_script('arguments[0].scrollTop = arguments[0].scrollTop + arguments[0].offsetHeight;', container)
-            #self.followers = container.find_elements_by_class_name("Igw0E.rBNOH.eGOV_.ybXk5._4EzTm.XfCBB.HVWg4")
 
+            # Get document height
             height = self.driver.execute_script("return arguments[0].scrollHeight", container)
             sleep(0.05)
 
+            # Grab all followers
+            self.followers = container.find_elements_by_class_name("Jv7Aj.mArmR.MqpiF") 
+
+            # Count how many iterations since the height last changed
             if height == lastheight:
                 count += 1
             else:
                 count = 0
             
             lastheight = height
-
-            self.followers = container.find_elements_by_class_name("Jv7Aj.mArmR.MqpiF") 
             
+            # Exit if scrolling has stalled for too long
             if count > condition:
                 break
 
@@ -112,24 +116,34 @@ class FollowerScraper:
 
     # Store 3 lists, gained, lost, and gained + lost. Reference last run's full list to determine who was gained and lost
     def make_lists(self):
+
         # Check that followers have been scraped
         if (len(self.followers) == 0):
             return
 
+        # Find new and lost followers
         new_gains = np.ndarray.tolist(np.setdiff1d(self.followers, self.prev_followers))
         new_loss = np.ndarray.tolist(np.setdiff1d(self.prev_followers, self.followers))
 
+        # Print updates
+        for new_follow in new_gains:
+            print(new_follow + " followed you")
+
+        for lost_follow in new_loss:
+            print(lost_follow + " unfollowed you")
+
+        # Update the full follower lists
         self.gained = self.gained + new_gains
         self.lost = self.lost + new_loss
-
         self.gain_and_lost = list(set(self.gained) & set(self.lost))
-        
+
+        # Print the total amount of followers
         print('gained ' + str(len(self.gained)) + ' followers')
         print('lost ' + str(len(self.lost)) + ' followers')
         print(str(len(self.followers)) + ' total followers')
+
         # Save pickle data
         self.data_list =  [self.gained, self.lost, self.gain_and_lost]
-
         pickle.dump(self.data_list, open("follower_lists.pkl", "wb"))        
 
 
@@ -178,19 +192,21 @@ def trace_gains(show_plot = False):
 
         plot_data.append([x/normalize for x in hashtag_data[tag].tolist()])
 
-        print('#' + tag + ' gained ' + str(hashtag_data[tag].gained) + ' followers from ' + str(normalize) + ' likes')
+        #print('#' + tag + ' gained ' + str(hashtag_data[tag].gained) + ' followers from ' + str(normalize) + ' likes')
 
     if len(hashtag_data) != 0 and len(plot_data) != 0:
         plot_data = np.array(plot_data)
+        plot_data = plot_data*100
         fig = plt.figure()
 
-        plt.plot(tags, plot_data[:,0])
-        plt.plot(tags, plot_data[:,1])
-        plt.plot(tags, plot_data[:,2])
-        plt.legend(['gained', 'lost', 'retained'])
+        plt.bar(tags, plot_data[:,0])
+        plt.bar(tags, plot_data[:,1])
+        plt.bar(tags, plot_data[:,2])
+        plt.legend(['gain', 'lose', 'retain'])
         plt.xticks(rotation = 45)
         plt.subplots_adjust(bottom = 0.25)
+        plt.ylabel("Probability of getting a follow per like (%)")
 
         if show_plot:
             plt.show() 
-#trace_gains()
+#trace_gains(show_plot=True)

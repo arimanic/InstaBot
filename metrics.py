@@ -1,7 +1,5 @@
 # Like metrics
 import pickle
-#import numpy as np
-#import matplotlib.pyplot as plt
 
 class Metrics:
 
@@ -30,7 +28,6 @@ class Metrics:
         
 
 class LikeData:
-
     def __init__(self, tag, time):
         self.htag = tag
         self.timestamp = time

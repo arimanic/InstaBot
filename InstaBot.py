@@ -13,6 +13,14 @@ import datetime
 import metrics
 import numpy as np
 import follower_tracker
+from webdriver_manager.chrome import ChromeDriverManager
+
+
+# Random probability thresholds
+p_like = 1/9 # Probability of liking a post
+p_break = 1/300 # Probability of switching hashtags
+p_follow = 1/30 # Probability of following account after liking photo
+
 
 class InstaBot:
     # Starts the bot
@@ -20,6 +28,7 @@ class InstaBot:
 
         self.username = username
         self.name = botname
+        self.followothers = False
 
         # Load metrics
         self.metrics = metrics.Metrics()
@@ -30,7 +39,7 @@ class InstaBot:
         
         # List of people to unfollow
         try:
-            self.unfollow_list = pickle.load(open("follows.pkl", "rb"))
+            self.unfollow_list = pickle.load(open(self.name + "_follows.pkl", "rb"))
         except:
             self.unfollow_list = list()
 
@@ -41,7 +50,7 @@ class InstaBot:
         try: # Load cookies
             cookies = pickle.load(open(self.name + "_cookies.pkl", "rb"))
         except: # No cookies found, generate them
-            self.driver = webdriver.Chrome(options=self.options)
+            self.driver = webdriver.Chrome(executable_path=ChromeDriverManager().install(), options=self.options)
             self.driver.implicitly_wait(5)
             self.driver.get("https://instagram.com")
 
@@ -64,7 +73,7 @@ class InstaBot:
         # Initialize the web driver with the headless option applied now
         self.options.headless = headless
         self.options.add_argument('--window-size=1920,1080')
-        self.driver = webdriver.Chrome(options=self.options)
+        self.driver = webdriver.Chrome(executable_path=ChromeDriverManager().install(), options=self.options)
         self.driver.implicitly_wait(5)
         self.driver.get("https://instagram.com")
 
@@ -72,12 +81,12 @@ class InstaBot:
         for cookie in cookies:
             self.driver.add_cookie(cookie)
 
-            
+
     # Call this to ensure all data is saved properly
     def release(self):
         # Dump the list of followers
         self.unfollow_accounts()
-        pickle.dump(self.unfollow_list, open("follows.pkl", "wb"))
+        pickle.dump(self.unfollow_list, open(self.name + "_follows.pkl", "wb"))
         self.metrics.save()
         self.driver.quit()
 
@@ -111,10 +120,6 @@ class InstaBot:
         followed = 0
         viewed = 1
 
-        # Random probability thresholds
-        p_like = 1/12 # Probability of liking a post
-        p_break = 1/300 # Probability of switching hashtags
-        p_follow = 1/80 # Probability of following account after liking photo
 
         # Click the first thumbnail
         try:
@@ -156,8 +161,8 @@ class InstaBot:
                     acct_name = WebDriverWait(self.driver, 1).until(EC.presence_of_element_located((By.CLASS_NAME,"sqdOP.yWX7d._8A5w5.ZIAjV"))).text
                     self.metrics.add(acct_name, metrics.LikeData(tag, datetime.datetime.now()))
 
-                    likes_today, last_time = pickle.load(open("loop_data.pkl", "rb"))
-                    pickle.dump([likes_today + 1, last_time], open("loop_data.pkl", "wb"))
+                    likes_today, last_time = pickle.load(open(self.name + "_loop_data.pkl", "rb"))
+                    pickle.dump([likes_today + 1, last_time], open(self.name + "_loop_data.pkl", "wb"))
 
                     print(str(liked) + ' Posts liked out of ' + str(viewed) + ' views, Total likes today: ' + str(likes_today+1), flush=True)
                 except Exception as e: 
@@ -169,7 +174,7 @@ class InstaBot:
                         pass
 
                 # Follow the account
-                if p_follow > np.random.uniform():
+                if p_follow > np.random.uniform() and self.followothers:
                     try:
                         acct_name = WebDriverWait(self.driver, 1).until(EC.presence_of_element_located((By.CLASS_NAME,"sqdOP.yWX7d._8A5w5.ZIAjV")))
                         follow = WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.CLASS_NAME, "sqdOP.yWX7d.y3zKF")))
@@ -178,7 +183,7 @@ class InstaBot:
 
                         print("now following " + acct_name.text)
                         self.unfollow_list.append((acct_name.text, datetime.datetime.now()))
-                        pickle.dump(self.unfollow_list, open('follows.pkl', 'wb'))
+                        pickle.dump(self.unfollow_list, open(self.name + '_follows.pkl', 'wb'))
 
                     except Exception as e: 
                         print(e)                
@@ -201,18 +206,21 @@ class InstaBot:
         # Load pkl
         for account, follow_time in self.unfollow_list:
             #print((datetime.datetime.now() - follow_time).total_seconds())
-            if (datetime.datetime.now() - follow_time).total_seconds() > 5*24*60*60:
+            if (datetime.datetime.now() - follow_time).total_seconds() > 1.5*24*60*60:
                 self.driver.get("https://www.instagram.com/" + account + "/")
 
                 try:
-                    unfollow = WebDriverWait(self.driver, 4).until(EC.element_to_be_clickable((By.CSS_SELECTOR,"[aria-label='Following']")))
+                    unfollow = WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable((By.CSS_SELECTOR,"[aria-label='Following']")))
                     unfollow.click()
 
-                    confirm = WebDriverWait(self.driver, 4).until(EC.element_to_be_clickable((By.CLASS_NAME,"aOOlW.-Cab_")))
+                    confirm = WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable((By.CLASS_NAME,"aOOlW.-Cab_")))
                     confirm.click()
 
+                    print("Automatically unfollowed " + account)
                 except Exception as e: 
-                    print(e)                
+                    #print(e)      
+                    # TODO handle accounts that have already been manually unfollowed
+                    updated_list.append((account, follow_time))          
                     pass
             else:
                 updated_list.append((account, follow_time))
@@ -225,4 +233,7 @@ class InstaBot:
 
         self.scraper = follower_tracker.FollowerScraper(self.driver, acct_name)
         self.scraper.scrape_followers()
+
+    def set_follow_others(self, val):
+        self.followothers = val
 

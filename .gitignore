@@ -128,3 +128,11 @@ dmypy.json
 # Pyre type checker
 .pyre/
 secret.txt
+
+#pickle dumps
+*.pkl
+
+#webdriver manager
+./wdm
+
+MyPyBuilder/

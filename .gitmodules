@@ -1,0 +1,3 @@
+[submodule "MyPyBuilder"]
+	path = MyPyBuilder
+	url = https://github.com/TristenHarr/MyPyBuilder.git
