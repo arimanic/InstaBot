@@ -61,20 +61,20 @@ def like_stuff(username, likes_per_day=1, followothers=False, headless_mode = Tr
     # Print the current status
     print("Likes = " +  str(likes_today) + ' Time elapsed today = ' + str(elapsed))
 
+    # Set up a bot to log in and like some posts
+    bot = InstaBot(username, username, password, headless_mode)
+    bot.set_follow_others(followothers)
     if likes_today < likes_per_day:
-        # Set up a bot to log in and like some posts
-        bot = InstaBot(username, username, password, headless_mode)
-        bot.set_follow_others(followothers)
         likes_today += bot.like_hashtags(np.random.randint(0, likes_per_day - likes_today + 1))
-        bot.release()
                 
         # Save the data from the last run 
         pickle.dump([likes_today, last_reset], open(username + "_loop_data.pkl", "wb"))
     else:
-        print("Done liking for the day")
+        print("Done liking for the day at " + datetime.datetime.now().strftime("%H:%M:%S"))
 
+    bot.release()
     # Delay until the next round of likes
-    threading.Timer(np.random.randint(1200, 3600), like_stuff, args=(username, likes_per_day, followothers)).start()
+    threading.Timer(np.random.randint(1200, 3600), like_stuff, args=(username, likes_per_day, followothers, headless_mode)).start()
 
             
 

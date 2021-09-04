@@ -17,7 +17,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 # Random probability thresholds
-p_like = 1/9 # Probability of liking a post
+p_like = 1/15 # Probability of liking a post
 p_break = 1/300 # Probability of switching hashtags
 p_follow = 1/30 # Probability of following account after liking photo
 
@@ -39,9 +39,18 @@ class InstaBot:
         
         # List of people to unfollow
         try:
-            self.unfollow_list = pickle.load(open(self.name + "_follows.pkl", "rb"))
+            self.unfollow_list = pickle.load(open(self.name + "_to_unfollow.pkl", "rb"))
         except:
             self.unfollow_list = list()
+            pickle.dump(self.unfollow_list, open(self.name + "_to_unfollow.pkl", "wb"))
+
+
+        # List of people to follow
+        try:
+            self.follow_list = pickle.load(open(self.name + "_to_follow.pkl", "rb"))
+        except:
+            self.follow_list = list()
+            pickle.dump(self.follow_list, open(self.name + "_to_follow.pkl", "wb"))
 
 
         self.options = Options()
@@ -81,19 +90,21 @@ class InstaBot:
         for cookie in cookies:
             self.driver.add_cookie(cookie)
 
+        # Follow any accounts that were queued to be followed
+        self.follow_accounts()
+
 
     # Call this to ensure all data is saved properly
     def release(self):
         # Dump the list of followers
         self.unfollow_accounts()
-        pickle.dump(self.unfollow_list, open(self.name + "_follows.pkl", "wb"))
+        pickle.dump(self.unfollow_list, open(self.name + "_to_unfollow.pkl", "wb"))
         self.metrics.save()
         self.driver.quit()
 
     # Likes pictures scraped from a hashtag up to maxlikes
     def like_hashtags(self, maxlikes):
         total_likes = 0
-        total_follows = 0
 
         while total_likes != maxlikes:
 
@@ -107,7 +118,6 @@ class InstaBot:
             # Run the like loop and record how many pictures are liked
             new_likes, new_follows = self.like_loop(maxlikes - total_likes, tag)
             total_likes += new_likes
-            total_follows += new_follows
 
         return total_likes
 
@@ -177,14 +187,12 @@ class InstaBot:
                 if p_follow > np.random.uniform() and self.followothers:
                     try:
                         acct_name = WebDriverWait(self.driver, 1).until(EC.presence_of_element_located((By.CLASS_NAME,"sqdOP.yWX7d._8A5w5.ZIAjV")))
-                        follow = WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable((By.CLASS_NAME, "sqdOP.yWX7d.y3zKF")))
-                        follow.click()
                         followed += 1
+                        self.follow_list.append(acct_name.text)
 
-                        print("now following " + acct_name.text)
-                        self.unfollow_list.append((acct_name.text, datetime.datetime.now()))
-                        pickle.dump(self.unfollow_list, open(self.name + '_follows.pkl', 'wb'))
+                        pickle.dump(self.follow_list, open(self.name + "_to_follow.pkl", "wb"))
 
+                        print("queued to follow " + acct_name.text)
                     except Exception as e: 
                         print(e)                
                         pass
@@ -205,6 +213,7 @@ class InstaBot:
         updated_list = list()
         # Load pkl
         for account, follow_time in self.unfollow_list:
+            sleep(random.uniform(5.0, 10.0))
             #print((datetime.datetime.now() - follow_time).total_seconds())
             if (datetime.datetime.now() - follow_time).total_seconds() > 1.5*24*60*60:
                 self.driver.get("https://www.instagram.com/" + account + "/")
@@ -219,13 +228,43 @@ class InstaBot:
                     print("Automatically unfollowed " + account)
                 except Exception as e: 
                     #print(e)      
-                    # TODO handle accounts that have already been manually unfollowed
-                    updated_list.append((account, follow_time))          
+                    # If the account was already unfollowed remove it from the list
+                    try:
+                        follow = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.CLASS_NAME,"_5f5mN.jIbKX._6VtSN.yZn4P")))
+                    except Exception as e: # If the follow button is not present this account still needs to be unfollowed. Put it back in the list
+                        updated_list.append((account, follow_time))          
+
                     pass
             else:
                 updated_list.append((account, follow_time))
             
         self.unfollow_list = updated_list
+
+    def follow_accounts(self):
+        # Load pkl
+        self.follow_list = pickle.load(open(self.name + '_to_follow.pkl', 'rb'))
+
+
+        for account in self.follow_list:
+            self.driver.get("https://www.instagram.com/" + account + "/")
+            try:
+                follow = WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable((By.CLASS_NAME,"_5f5mN.jIbKX._6VtSN.yZn4P")))
+                follow.click()
+
+                self.unfollow_list = pickle.load(open(self.name + '_to_unfollow.pkl', 'rb'))
+                self.unfollow_list.append((account, datetime.datetime.now()))
+                pickle.dump(self.unfollow_list, open(self.name + '_to_unfollow.pkl', 'wb'))
+
+                print("Automatically followed " + account)
+            except Exception as e: 
+                pass
+
+            sleep(random.uniform(3.0, 10.0))
+            
+        # Clear the follow list
+        self.follow_list = list()
+        pickle.dump(self.follow_list, open(self.name + "_to_follow.pkl", "wb"))
+
 
     def get_followers(self, acct_name = None):
         if acct_name is None:
